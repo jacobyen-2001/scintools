@@ -1475,6 +1475,101 @@ def single_chunk_retrieval(params):
         model_E = np.zeros(dspec2.shape, dtype=complex)
     return (model_E, idx_f, idx_t)
 
+def single_chunk_retrieval2(params):
+    """
+    Performs phase retrieval on a single time/frequency chunk.
+    Designed for use in parallel phase retreival code
+
+    Parameters
+    ----------
+    params : List
+        dspec2 : `~numpy.ndarray`
+            Section of the Dynamic Spectrum to be analyzed
+        edges : `~astropy.units.Quantity`
+            Bin edges for theta-theta mapping (mHz). Should have an even number
+            of points and be symmetric about 0
+        time : `~astropy.units.Quantity`
+            Time bins for the section of the spectrum being examined (s)
+        freq : `~astropy.units.Quantity`
+            Frequency channels for the section of the spectrum being examined
+        eta : `~astropy.units.Quantity`
+            Arc curvature for the section of the spectrum being examined
+        idx_t : int
+            Time index of chunk being examined
+        idx_f : int
+            Frequency index of chunk being examined
+        npad : int
+            Number of zeros paddings to add to end of dspec
+        tauMask : `~astropy.units.Quantity`
+            Sets all points with abs(tau)<tauMask  to 0
+        verbose : bool
+            Control the number of print statements
+
+    """
+
+    # Read parameters
+    dspec2, edges, time, freq, eta, idx_t, idx_f, npad, tauMask, verbose = params
+
+    # Verify unit compatability
+    time2 = unit_checks(time, "time2", u.s)
+    freq2 = unit_checks(freq, "freq2", u.MHz)
+    eta = unit_checks(eta, "eta", u.s**3)
+    edges = unit_checks(edges, "edges", u.mHz)
+
+    if verbose:
+        # Progress Reporting
+        print("Starting Chunk %s-%s" % (idx_f, idx_t), flush=True)
+
+    # Determine fd and tau coordinates of Conjugate Spectrum
+    fd = fft_axis(time2, u.mHz, npad)
+    tau = fft_axis(freq2, u.us, npad)
+
+    # Pad dynamic spectrum to help with peiodicity problem
+    dspec_pad = np.pad(
+        dspec2,
+        ((0, npad * dspec2.shape[0]), (0, npad * dspec2.shape[1])),
+        mode="constant",
+        constant_values=dspec2.mean(),
+    )
+
+    # Compute Conjugate Spectrum
+    CS = np.fft.fft2(dspec_pad)
+    CS = np.fft.fftshift(CS)
+    CS[np.abs(tau)<tauMask]=0
+
+    # Try phase retrieval on chunk
+    try:
+        # Calculate Reduced TH-TH and largest eigenvalue/vector pair
+        thth_red, thth2_red, recov, model, edges_red, U,S,W = modeler(
+            CS, tau, fd, eta, edges
+        )
+
+        # Build model TH-TH for wavefield
+        ththE_red_ar = thth_red * 0
+        ththE_red_gb = thth_red * 0
+        ththE_red_ar[ththE_red.shape[0] // 2, :] = np.conjugate(U[:,0]) * np.sqrt(S)
+        ththE_red_gb[ththE_red.shape[0] // 2, :] = np.conjugate(W[0,:]) * np.sqrt(S)
+        # Map back to time/frequency space
+        recov_E_ar = rev_map(ththE_red_ar, tau, fd, eta, edges_red, hermetian=False)
+        recov_E_gb = rev_map(ththE_red_gb, tau, fd, eta, edges_red, hermetian=False)
+        model_E_ar = np.fft.ifft2(np.fft.ifftshift(recov_E_ar))[
+            : dspec2.shape[0], : dspec2.shape[1]
+        ]
+        model_E_ar *= dspec2.shape[0] * dspec2.shape[1] / 4
+        model_E_gb = np.fft.ifft2(np.fft.ifftshift(recov_E_gb))[
+            : dspec2.shape[0], : dspec2.shape[1]
+        ]
+        model_E_gb *= dspec2.shape[0] * dspec2.shape[1] / 4
+        if verbose:
+            # Progress Reporting
+            print("Chunk %s-%s success" % (idx_f, idx_t), flush=True)
+    except Exception as e:
+        # If chunk cannot be recovered print Error and return zero array
+        #     (Prevents failure of a single chunk from ending phase retrieval)
+        print(e, flush=True)
+        model_E = np.zeros(dspec2.shape, dtype=complex)
+    return (model_E_ar,model_E_gb, idx_f, idx_t)
+
 
 def mask_func(w):
     """

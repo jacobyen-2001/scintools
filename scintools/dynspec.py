@@ -1825,7 +1825,76 @@ class Dynspec:
             else:
                 for res in pool.map(thth.single_chunk_retrieval, pars):
                     self.chunks[res[1], res[2], :, :] = res[0]
+    
+    def thetatheta_chunks2(self, verbose=False, pool=None, memmap=False):
+        """
+        Loop theta-theta over all retrieval chunks to generate the chunks array
 
+        Parameters
+        ----------
+        verbose : bool, optional
+            Option to print progress information. Defaults to False
+        pool : ThreadPool, optional
+            Pool of workers for parallel processing. Currently supports Pool
+            from multiprocessing and MPIPool from mpipool. Defaults
+            to None and runs chunks in series.
+        memmap : bool, optional
+            Option to use numpy's memmap to save memort by saving the chunks
+            array to disk. Will be slower so use only when necessary.
+            Defaults to False
+        """
+        if not hasattr(self, "ththeta"):
+            self.fit_thetatheta(verbose=verbose, pool=pool)
+        if memmap:
+            self.chunks_ar = np.memmap('memmap.dat', dtype=complex, mode='w+',
+                                    shape=(self.ncf_ret, self.nct_ret,
+                                           self.cwf, self.cwt))
+            self.chunks_gb = np.memmap('memmap.dat', dtype=complex, mode='w+',
+                                    shape=(self.ncf_ret, self.nct_ret,
+                                           self.cwf, self.cwt))
+        else:
+            self.chunks_ar = np.zeros(
+                (self.ncf_ret, self.nct_ret, self.cwf, self.cwt),
+                dtype=complex)
+            self.chunks_gb = np.zeros(
+                (self.ncf_ret, self.nct_ret, self.cwf, self.cwt),
+                dtype=complex)
+        if pool is not None:
+            pars = list()
+        for cf in range(self.ncf_ret):
+            fs = slice(cf*(self.cwf//2), cf*(self.cwf//2)+self.cwf)
+            freq2 = np.copy(self.freqs[fs])*u.MHz
+            freq = freq2.mean()
+            eta = self.ththeta*(self.fref/freq)**2
+            for ct in range(self.nct_ret):
+                ts = slice(ct*(self.cwt//2), ct*(self.cwt//2)+self.cwt)
+                time2 = np.copy(self.times[ts])*u.s
+                dspec2 = np.copy(self.dyn[fs, ts])
+                dspec2 -= np.nanmean(dspec2)
+                dspec2 = np.nan_to_num(dspec2)
+                params = (dspec2, self.edges*(freq/self.fref), time2,
+                          freq2, eta, ct, cf, self.npad,self.thth_tau_mask, verbose)
+                if pool is None:
+                    res = thth.single_chunk_retrieval2(params)
+                    self.chunks_ar[cf, ct, :, :] = res[0]
+                    self.chunks_gb[cf, ct, :, :] = res[1]
+                else:
+                    pars.append(params)
+        if pool is not None:
+            if memmap:
+                sub = 20
+                for i in range(len(pars)//sub):
+                    for res in pool.map(thth.single_chunk_retrieval,
+                                        pars[i*sub:(i+1)*sub]):
+                        self.chunks[res[1], res[2], :, :] = res[0]
+                    print(f"memmap {i} complete")
+                if sub*(len(pars)//sub) < len(pars):
+                    for res in pool.map(thth.single_chunk_retrieval,
+                                        pars[sub*(len(pars)//sub):]):
+                        self.chunks[res[1], res[2], :, :] = res[0]
+            else:
+                for res in pool.map(thth.single_chunk_retrieval, pars):
+                    self.chunks[res[1], res[2], :, :] = res[0]
     def calc_wavefield(self, verbose=False, pool=None, gs=False, memmap=False,
                        niter=1):
         """
@@ -1847,7 +1916,7 @@ class Dynspec:
             Option to use memmap for chunks array. Defaults to False
         """
         if not hasattr(self, "chunks"):
-            self.thetatheta_chunks(verbose=verbose, pool=pool, memmap=memmap)
+            self.thetatheta_chunks2(verbose=verbose, pool=pool, memmap=memmap)
         self.wavefield = thth.mosaic(self.chunks)
         if gs:
             self.gerchberg_saxton(verbose=verbose, pool=pool, niter=niter)
@@ -1889,6 +1958,94 @@ class Dynspec:
                 self.dyn[:self.wavefield.shape[0],
                          :self.wavefield.shape[1]][posdspec]) * \
                 np.exp(1j*np.angle(self.wavefield[posdspec]))
+
+    def calc_wavefield2(self, verbose=False, pool=None, gs=False, memmap=False,
+                       niter=1):
+        """
+        Perform mosaic stacking of the chunks array to construct the
+        final wavefield.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            Option to print progress information. Defaults to False
+        pool : ThreadPool, optional
+            Pool of workers for parallel processing. Currently supports Pool
+            from multiprocessing and MPIPool from mpipool. Defaults
+            to None and runs chunks in series (only if chunks array does not
+                                               exist).
+        gs : bool, optional
+            Option to use Gerchberg-Saxton algorithm. Defaults to False
+        memmap: bool, optional
+            Option to use memmap for chunks array. Defaults to False
+        """
+        if not hasattr(self, "chunks"):
+            self.thetatheta_chunks2(verbose=verbose, pool=pool, memmap=memmap)
+        self.wavefield_ar = thth.mosaic(self.chunks_ar)
+        self.wavefield_gb = thth.mosaic(self.chunks_gb)
+        if gs:
+            self.gerchberg_saxton2(verbose=verbose, pool=pool, niter=niter)
+
+    def gerchberg_saxton2(self, niter=1, verbose=False, pool=None):
+        """
+        Apply Gerchberg-Saxton algortihm to wavefield to enforce causality and
+        amplitude constraints.
+
+        Parameters
+        ----------
+        niter : int, optional
+            Number of iterations of the algorithm to apply. Defaults to 1
+        verbose : bool, optional
+            Option to print progress information. Defaults to False
+        pool : ThreadPool, optional
+            Pool of workers for parallel processing. Currently supports Pool
+            from multiprocessing and MPIPool from mpipool. Defaults
+            to None and runs chunks in series.
+        """
+        self.calc_wavefield2(verbose=verbose, pool=pool)
+        posdspec = np.isfinite(self.dyn[:self.wavefield_ar.shape[0],
+                                        :self.wavefield_ar.shape[1]]) * (
+            self.dyn[:self.wavefield_ar.shape[0], :self.wavefield_ar.shape[1]] > 0)
+        tau = thth.fft_axis(self.freqs[:self.wavefield_ar.shape[0]]*u.MHz, u.us)
+        self.wavefield_ar *= \
+            np.sqrt(self.dyn[:self.wavefield_ar.shape[0],
+                             :self.wavefield_ar.shape[1]][posdspec].mean() /
+                    np.abs(self.wavefield_ar[posdspec]**2).mean())
+        self.wavefield_ar[posdspec] = np.sqrt(
+            self.dyn[:self.wavefield_ar.shape[0],
+                     :self.wavefield_ar.shape[1]][posdspec]) * \
+            np.exp(1j*np.angle(self.wavefield_ar[posdspec]))
+        for i in range(niter):
+            CWF = np.fft.fftshift(np.fft.fft2(self.wavefield_ar))
+            CWF[tau < 0] = 0
+            self.wavefield_ar = np.fft.ifft2(np.fft.ifftshift(CWF))
+            self.wavefield_ar[posdspec] = np.sqrt(
+                self.dyn[:self.wavefield_ar.shape[0],
+                         :self.wavefield_ar.shape[1]][posdspec]) * \
+                np.exp(1j*np.angle(self.wavefield_ar[posdspec]))
+        
+        # ----------- gb ------------
+
+        posdspec = np.isfinite(self.dyn[:self.wavefield_gb.shape[0],
+                                        :self.wavefield_gb.shape[1]]) * (
+            self.dyn[:self.wavefield_gb.shape[0], :self.wavefield_gb.shape[1]] > 0)
+        tau = thth.fft_axis(self.freqs[:self.wavefield.shape[0]]*u.MHz, u.us)
+        self.wavefield_gb *= \
+            np.sqrt(self.dyn[:self.wavefield_gb.shape[0],
+                             :self.wavefield_gb.shape[1]][posdspec].mean() /
+                    np.abs(self.wavefield_gb[posdspec]**2).mean())
+        self.wavefield_gb[posdspec] = np.sqrt(
+            self.dyn[:self.wavefield_gb.shape[0],
+                     :self.wavefield_gb.shape[1]][posdspec]) * \
+            np.exp(1j*np.angle(self.wavefield_gb[posdspec]))
+        for i in range(niter):
+            CWF = np.fft.fftshift(np.fft.fft2(self.wavefield_gb))
+            CWF[tau < 0] = 0
+            self.wavefield_gb = np.fft.ifft2(np.fft.ifftshift(CWF))
+            self.wavefield_gb[posdspec] = np.sqrt(
+                self.dyn[:self.wavefield_gb.shape[0],
+                         :self.wavefield_gb.shape[1]][posdspec]) * \
+                np.exp(1j*np.angle(self.wavefield_gb[posdspec]))
 
     def calc_asymmetry(self, verbose=False, pool=None):
         if not hasattr(self, "ththeta"):
