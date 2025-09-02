@@ -1758,7 +1758,8 @@ class Dynspec:
                              np.ravel(self.eta_evo.value),
                              yerr=np.ravel(self.eta_evo_err.value), fmt='.')
             plt.plot(self.f0s,A/self.f0s**2,label = r'$\eta_{%s}$ = %s $\pm$ %s $s^3$' %
-            (np.floor(self.fref),fit_string, err_string))
+            (np.f
+             loor(self.fref),fit_string, err_string))
             plt.xlabel(r'$\rm{Freq}~\left(\rm{MHz}\right)$')
             plt.ylabel(r'$\eta~\left(\rm{s}^3\right)$')
             plt.legend()
@@ -1828,7 +1829,8 @@ class Dynspec:
     
     def thetatheta_chunks2(self, verbose=False, pool=None, memmap=False):
         """
-        Loop theta-theta over all retrieval chunks to generate the chunks array
+        Loop theta-theta over all retrieval chunks to generate the chunks array. 
+        Initiate chunk for ar and gb.
 
         Parameters
         ----------
@@ -1885,8 +1887,7 @@ class Dynspec:
                 sub = 20
                 for i in range(len(pars)//sub):
                     for res in pool.map(thth.single_chunk_retrieval,
-                                        pars[i*sub:(i+1)*sub]):
-                        self.chunks[res[1], res[2], :, :] = res[0]
+                                        pars[bb                        self.chunks[res[1], res[2], :, :] = res[0]
                     print(f"memmap {i} complete")
                 if sub*(len(pars)//sub) < len(pars):
                     for res in pool.map(thth.single_chunk_retrieval,
@@ -1895,6 +1896,9 @@ class Dynspec:
             else:
                 for res in pool.map(thth.single_chunk_retrieval, pars):
                     self.chunks[res[1], res[2], :, :] = res[0]
+
+
+    
     def calc_wavefield(self, verbose=False, pool=None, gs=False, memmap=False,
                        niter=1):
         """
@@ -1916,7 +1920,7 @@ class Dynspec:
             Option to use memmap for chunks array. Defaults to False
         """
         if not hasattr(self, "chunks"):
-            self.thetatheta_chunks2(verbose=verbose, pool=pool, memmap=memmap)
+            self.thetatheta_chunks(verbose=verbose, pool=pool, memmap=memmap)
         self.wavefield = thth.mosaic(self.chunks)
         if gs:
             self.gerchberg_saxton(verbose=verbose, pool=pool, niter=niter)
@@ -2003,16 +2007,16 @@ class Dynspec:
             to None and runs chunks in series.
         """
         self.calc_wavefield2(verbose=verbose, pool=pool)
-        posdspec = np.isfinite(self.dyn[:self.wavefield_ar.shape[0],
+        posdspec = np.isfinite(self.dyn1[:self.wavefield_ar.shape[0],
                                         :self.wavefield_ar.shape[1]]) * (
-            self.dyn[:self.wavefield_ar.shape[0], :self.wavefield_ar.shape[1]] > 0)
+            self.dyn1[:self.wavefield_ar.shape[0], :self.wavefield_ar.shape[1]] > 0)
         tau = thth.fft_axis(self.freqs[:self.wavefield_ar.shape[0]]*u.MHz, u.us)
         self.wavefield_ar *= \
-            np.sqrt(self.dyn[:self.wavefield_ar.shape[0],
+            np.sqrt(self.dyn1[:self.wavefield_ar.shape[0],
                              :self.wavefield_ar.shape[1]][posdspec].mean() /
                     np.abs(self.wavefield_ar[posdspec]**2).mean())
         self.wavefield_ar[posdspec] = np.sqrt(
-            self.dyn[:self.wavefield_ar.shape[0],
+            self.dyn1[:self.wavefield_ar.shape[0],
                      :self.wavefield_ar.shape[1]][posdspec]) * \
             np.exp(1j*np.angle(self.wavefield_ar[posdspec]))
         for i in range(niter):
@@ -2020,22 +2024,22 @@ class Dynspec:
             CWF[tau < 0] = 0
             self.wavefield_ar = np.fft.ifft2(np.fft.ifftshift(CWF))
             self.wavefield_ar[posdspec] = np.sqrt(
-                self.dyn[:self.wavefield_ar.shape[0],
+                self.dyn1[:self.wavefield_ar.shape[0],
                          :self.wavefield_ar.shape[1]][posdspec]) * \
                 np.exp(1j*np.angle(self.wavefield_ar[posdspec]))
         
         # ----------- gb ------------
 
-        posdspec = np.isfinite(self.dyn[:self.wavefield_gb.shape[0],
+        posdspec = np.isfinite(self.dyn2[:self.wavefield_gb.shape[0],
                                         :self.wavefield_gb.shape[1]]) * (
-            self.dyn[:self.wavefield_gb.shape[0], :self.wavefield_gb.shape[1]] > 0)
+            self.dyn2[:self.wavefield_gb.shape[0], :self.wavefield_gb.shape[1]] > 0)
         tau = thth.fft_axis(self.freqs[:self.wavefield.shape[0]]*u.MHz, u.us)
         self.wavefield_gb *= \
-            np.sqrt(self.dyn[:self.wavefield_gb.shape[0],
+            np.sqrt(self.dyn2[:self.wavefield_gb.shape[0],
                              :self.wavefield_gb.shape[1]][posdspec].mean() /
                     np.abs(self.wavefield_gb[posdspec]**2).mean())
         self.wavefield_gb[posdspec] = np.sqrt(
-            self.dyn[:self.wavefield_gb.shape[0],
+            self.dyn2[:self.wavefield_gb.shape[0],
                      :self.wavefield_gb.shape[1]][posdspec]) * \
             np.exp(1j*np.angle(self.wavefield_gb[posdspec]))
         for i in range(niter):
@@ -2043,7 +2047,7 @@ class Dynspec:
             CWF[tau < 0] = 0
             self.wavefield_gb = np.fft.ifft2(np.fft.ifftshift(CWF))
             self.wavefield_gb[posdspec] = np.sqrt(
-                self.dyn[:self.wavefield_gb.shape[0],
+                self.dyn2[:self.wavefield_gb.shape[0],
                          :self.wavefield_gb.shape[1]][posdspec]) * \
                 np.exp(1j*np.angle(self.wavefield_gb[posdspec]))
 
@@ -4366,6 +4370,74 @@ class BasicDyn():
         self.tobs = tobs if tobs is not None else np.ptp(times) + dt
         self.mjd = mjd
         self.dyn = dyn
+        return
+
+class BasicDynVis():
+
+    def __init__(self, dyn1, dyn2, vis, name="BasicDyn", header=["BasicDyn"], times=[],
+                 freqs=[], nchan=None, nsub=None, bw=None, df=None,
+                 freq=None, tobs=None, dt=None, mjd=60000):
+        """
+        Define a basic dynamic spectrum object from an array of fluxes
+            and other variables, which can then be passed to the dynspec
+            class to access its functions with:
+        BasicDyn_Object = BasicDyn(dyn)
+        Dynspec_Object = Dynspec(BasicDyn_Object)
+
+        Parameters
+        ----------
+        dyn : 2D array
+            The dynamic spectrum.
+        name : str, optional
+            Name of the dynamic spectrum. The default is "BasicDyn".
+        header : list of str, optional
+            Header for the object. The default is ["BasicDyn"].
+        times : 1D array, optional
+            Time axis. The default is [].
+        freqs : 1D array, optional
+            Frequency axis. The default is [].
+        nchan : int, optional
+            Number of frequency channels. The default is None.
+        nsub : int, optional
+            Number of sub-integrations. The default is None.
+        bw : float, optional
+            Observation bandwidth. The default is None.
+        df : float, optional
+            Frequncy channel width. The default is None.
+        freq : float, optional
+            Observation frequency. The default is None.
+        tobs : float, optional
+            Observation time duration. The default is None.
+        dt : float, optional
+            Sub-integration duration. The default is None.
+        mjd : float, optional
+            MJD of observation. The default is None.
+
+        Raises
+        ------
+        ValueError
+            If the time or frequency axes are left unspecified.
+
+        """
+
+        # Set parameters from input
+        if times.size == 0 or freqs.size == 0:
+            raise ValueError('must input array of times and frequencies')
+        self.name = name
+        self.header = header
+        self.times = times  # times should be the start times of each bin
+        self.freqs = freqs
+        self.nchan = nchan if nchan is not None else len(freqs)
+        self.nsub = nsub if nsub is not None else len(times)
+        self.bw = bw if bw is not None else np.ptp(freqs)
+        self.df = df if df is not None else np.mean(np.abs(np.diff(freqs)))
+        self.freq = freq if freq is not None else np.mean(np.unique(freqs))
+        self.dt = dt if dt is not None else np.mean(np.abs(np.diff(times)))
+        self.tobs = tobs if tobs is not None else np.ptp(times) + dt
+        self.mjd = mjd
+        self.dyn1 = dyn1
+        self.dyn2 = dyn2
+        self.vis = vis
         return
 
 

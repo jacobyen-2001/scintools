@@ -1552,13 +1552,13 @@ def single_chunk_retrieval2(params):
         # Map back to time/frequency space
         recov_E_ar = rev_map(ththE_red_ar, tau, fd, eta, edges_red, hermetian=False)
         recov_E_gb = rev_map(ththE_red_gb, tau, fd, eta, edges_red, hermetian=False)
+        # model E ar
         model_E_ar = np.fft.ifft2(np.fft.ifftshift(recov_E_ar))[
-            : dspec2.shape[0], : dspec2.shape[1]
-        ]
+            : dspec2.shape[0], : dspec2.shape[1]        ]
         model_E_ar *= dspec2.shape[0] * dspec2.shape[1] / 4
+        # model E gb
         model_E_gb = np.fft.ifft2(np.fft.ifftshift(recov_E_gb))[
-            : dspec2.shape[0], : dspec2.shape[1]
-        ]
+            : dspec2.shape[0], : dspec2.shape[1]        ]
         model_E_gb *= dspec2.shape[0] * dspec2.shape[1] / 4
         if verbose:
             # Progress Reporting
